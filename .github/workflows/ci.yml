@@ -25,4 +25,4 @@ jobs:
         run: |
           python3 -m venv /tmp/waviot-dependency-audit
           /tmp/waviot-dependency-audit/bin/pip install pip-audit==2.9.0
-          /tmp/waviot-dependency-audit/bin/pip-audit --strict --no-deps -r requirements.lock
+          /tmp/waviot-dependency-audit/bin/pip-audit --strict --no-deps -r requirements.lock -r requirements-test.lock -r requirements-build.lock

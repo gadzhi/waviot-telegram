@@ -12,7 +12,8 @@ iniconfig==2.3.1
 packaging==26.3
 pathspec==1.1.1
 pluggy==1.7.0
-pytest==8.3.5
+pytest==9.0.3
 sqlparse==0.6.0
 trove-classifiers==2026.9.21.13
 typing_extensions==4.16.0
+pygments==2.21.0
