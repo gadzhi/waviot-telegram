@@ -1,0 +1,34 @@
+# Add only on a server with the configured domain pointing at it.
+services:
+  admin:
+    environment:
+      ADMIN_PUBLIC: "true"
+      ADMIN_ALLOWED_HOSTS: "${ADMIN_DOMAIN:?Set ADMIN_DOMAIN},localhost,127.0.0.1"
+      ADMIN_CSRF_ORIGINS: "https://${ADMIN_DOMAIN}"
+  proxy:
+    image: waviot-proxy:local
+    build:
+      context: .
+      target: proxy
+    user: "10001:10001"
+    environment:
+      ADMIN_DOMAIN: "${ADMIN_DOMAIN:?Set ADMIN_DOMAIN}"
+      XDG_DATA_HOME: /data
+      XDG_CONFIG_HOME: /config
+    ports: ["80:8080", "443:8443"]
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 100
+    restart: unless-stopped
+    depends_on:
+      admin:
+        condition: service_healthy
+volumes:
+  caddy_data:
+  caddy_config:

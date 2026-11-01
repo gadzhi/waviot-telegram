@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "waviot-telegram"
+version = "0.1.0"
+description = "Local Telegram investigations and read-only Waviot data audit"
+requires-python = ">=3.13"
+dependencies = ["httpx==0.28.1", "Django==5.2.18", "gunicorn==25.3.0"]
+
+[project.optional-dependencies]
+dev = ["pytest==8.3.5"]
+
+[project.scripts]
+waviot-audit = "waviot_telegram.cli:main"
+waviot-bot = "waviot_telegram.bot:main"
+waviot-admin = "waviot_telegram.admin_cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/waviot_telegram"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

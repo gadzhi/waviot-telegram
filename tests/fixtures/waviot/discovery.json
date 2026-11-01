@@ -1,0 +1,20 @@
+{
+  "status": "ok",
+  "tree": {
+    "100": {
+      "id": 100,
+      "name": "House",
+      "type": 1,
+      "200": {
+        "id": 200,
+        "name": "Corpus",
+        "type": 2,
+        "201": {
+          "id": 201,
+          "name": "Resident name",
+          "type": 3
+        }
+      }
+    }
+  }
+}

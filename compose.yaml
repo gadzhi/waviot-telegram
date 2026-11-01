@@ -1,0 +1,61 @@
+name: waviot
+x-app: &app
+  image: waviot-telegram:local
+  build:
+    context: .
+    target: runtime
+  env_file: ${WAVIOT_ENV_FILE:-.env}
+  environment:
+    BOT_DATABASE: /data/state.sqlite3
+    ADMIN_SECRET_KEY_FILE: /data/admin-secret.key
+    WAVIOT_SCOPE_FILE: /data/audit-scope.json
+    BOT_LIVE_ALERTS: "false"
+  volumes:
+    - runtime:/data
+  restart: unless-stopped
+  read_only: true
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  pids_limit: 100
+  mem_limit: 512m
+  cpus: 1.0
+  stop_grace_period: 90s
+services:
+  bot:
+    <<: *app
+    container_name: waviot-bot
+    command: [waviot-bot, run]
+    healthcheck:
+      test: [CMD, python, -m, waviot_telegram.healthcheck]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+      retries: 3
+  admin:
+    <<: *app
+    command: [waviot-admin, serve, --bind, "0.0.0.0:8000"]
+    ports: ["127.0.0.1:${ADMIN_PORT:-8000}:8000"]
+    healthcheck:
+      test: [CMD, waviot-admin, health]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  tests:
+    profiles: [test]
+    image: waviot-telegram:test
+    build:
+      context: .
+      target: test
+    network_mode: none
+    environment:
+      WAVIOT_SCOPE_FILE: audit-scope.json
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 100
+
+volumes:
+  runtime:

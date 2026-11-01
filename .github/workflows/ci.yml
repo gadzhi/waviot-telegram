@@ -1,0 +1,28 @@
+name: Tests and security
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Check publication boundaries
+        run: python3 scripts/check_public_tree.py
+      - name: Prepare empty local configuration
+        run: cp .env.example .env
+      - name: Run Linux tests without credentials or network
+        run: |
+          docker compose --profile test build tests
+          docker compose --profile test run --rm --no-deps tests
+      - name: Check dependencies for known vulnerabilities
+        run: |
+          python3 -m venv /tmp/waviot-dependency-audit
+          /tmp/waviot-dependency-audit/bin/pip install pip-audit==2.9.0
+          /tmp/waviot-dependency-audit/bin/pip-audit --strict --no-deps -r requirements.lock

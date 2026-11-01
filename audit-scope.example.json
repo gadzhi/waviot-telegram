@@ -1,0 +1,7 @@
+{
+  "house_id": "REPLACE_WITH_HOUSE_NODE_ID",
+  "accepted_apartment_count": 2,
+  "expected_node_ids": [
+    "REPLACE_WITH_NODE_ID_FROM_EACH_CORPUS"
+  ]
+}

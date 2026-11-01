@@ -1,0 +1,1 @@
+{% extends 'web/base.html' %}{% block navigation %}{% endblock %}{% block content %}<h1>Вход администратора</h1><section><form method="post">{% csrf_token %}{{ form.as_p }}<button>Войти</button></form><footer>Введите логин и пароль администратора.</footer></section>{% endblock %}
