@@ -4,5 +4,7 @@
     admin off
 }
 {$ADMIN_DOMAIN} {
-    reverse_proxy admin:8000
+    reverse_proxy admin:8000 {
+        header_up X-Forwarded-For {remote_host}
+    }
 }

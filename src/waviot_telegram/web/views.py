@@ -1,5 +1,7 @@
 import hashlib
 import sqlite3
+import socket
+from ipaddress import ip_address
 from pathlib import Path
 from datetime import datetime, timezone
 from functools import wraps
@@ -47,13 +49,32 @@ def protected(view):
     return wrapped
 
 
+def client_address(request):
+    peer = request.META.get('REMOTE_ADDR', 'unknown')
+    proxy = settings.ADMIN_TRUSTED_PROXY
+    if not settings.PUBLIC or not proxy:
+        return peer
+    try:
+        try:
+            trusted = {ip_address(proxy)}
+        except ValueError:
+            # Docker service addresses may change when containers are recreated.
+            trusted = {ip_address(item[4][0]) for item in socket.getaddrinfo(proxy, None, type=socket.SOCK_STREAM)}
+        if ip_address(peer) in trusted:
+            # Caddy replaces this header with one address; do not accept a chain.
+            return str(ip_address(request.META.get('HTTP_X_FORWARDED_FOR', '')))
+    except (ValueError, OSError):
+        pass
+    return peer
+
+
 def login(request):
     form = LoginForm(request.POST or None)
     if request.method == 'POST' and form.is_valid():
         now = datetime.now(timezone.utc)
-        # Throttle both the account and source. Do not trust client-supplied forwarded IPs.
+        # Accept a forwarded address only from the explicitly configured proxy.
         name = form.cleaned_data['username'].casefold()
-        keys = ['web:user:' + hashlib.sha256(name.encode()).hexdigest(), 'web:ip:' + str(request.META.get('REMOTE_ADDR', 'unknown'))]
+        keys = ['web:user:' + hashlib.sha256(name.encode()).hexdigest(), 'web:ip:' + client_address(request)]
         with Store(settings.BOT_DATABASE) as store:
             access = Access(store)
             with store.atomic():

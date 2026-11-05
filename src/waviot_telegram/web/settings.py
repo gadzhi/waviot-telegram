@@ -8,6 +8,7 @@ SECRET_FILE = Path(values.get('ADMIN_SECRET_KEY_FILE', str(BOT_DATABASE.parent /
 SECRET_KEY = values.get('ADMIN_SECRET_KEY') or SECRET_FILE.read_text().strip()
 DEBUG = False
 PUBLIC = values.get('ADMIN_PUBLIC', 'false').lower() == 'true'
+ADMIN_TRUSTED_PROXY = values.get('ADMIN_TRUSTED_PROXY', '').strip()
 ALLOWED_HOSTS = [v.strip() for v in values.get('ADMIN_ALLOWED_HOSTS', 'localhost,127.0.0.1,[::1]').split(',') if v.strip()]
 CSRF_TRUSTED_ORIGINS = [v.strip() for v in values.get('ADMIN_CSRF_ORIGINS', '').split(',') if v.strip()]
 ROOT_URLCONF = 'waviot_telegram.web.urls'

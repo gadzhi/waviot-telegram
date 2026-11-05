@@ -3,6 +3,7 @@ services:
   admin:
     environment:
       ADMIN_PUBLIC: "true"
+      ADMIN_TRUSTED_PROXY: "proxy"
       ADMIN_ALLOWED_HOSTS: "${ADMIN_DOMAIN:?Set ADMIN_DOMAIN},localhost,127.0.0.1"
       ADMIN_CSRF_ORIGINS: "https://${ADMIN_DOMAIN}"
   proxy:

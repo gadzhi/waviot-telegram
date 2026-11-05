@@ -29,9 +29,9 @@ def web(tmp_path):
         yield Client(enforce_csrf_checks=True)
 
 
-def post(client, url, data):
+def post(client, url, data, **headers):
     client.get('/login/')
-    return client.post(url, data, HTTP_X_CSRFTOKEN=client.cookies['csrftoken'].value, HTTP_ORIGIN='http://testserver')
+    return client.post(url, data, HTTP_X_CSRFTOKEN=client.cookies['csrftoken'].value, HTTP_ORIGIN='http://testserver', **headers)
 
 
 def account(name, staff=True):
@@ -100,3 +100,73 @@ def test_stylesheet_is_same_origin_without_inline_style_exception(web):
     css = web.get('/assets/admin.css')
     assert css.status_code == 200 and css['Content-Type'].startswith('text/css')
     assert b'font' in css.content
+
+
+def test_proxy_client_limit_does_not_lock_other_clients(web):
+    user = account('proxy-admin')
+    with override_settings(PUBLIC=True, ADMIN_TRUSTED_PROXY='192.0.2.10'):
+        for number in range(10):
+            post(web, '/login/', {'username': f'unknown-{number}', 'password': 'wrong'},
+                 REMOTE_ADDR='192.0.2.10', HTTP_X_FORWARDED_FOR='198.51.100.1')
+        # Same proxy, different client and account: correct credentials still work.
+        response = post(web, '/login/', {'username': user.username, 'password': 'test-password'},
+                        REMOTE_ADDR='192.0.2.10', HTTP_X_FORWARDED_FOR='198.51.100.2')
+        assert response.status_code == 302
+        assert web.get('/').status_code == 200
+
+
+def test_untrusted_forwarded_header_cannot_bypass_source_limit(web):
+    user = account('untrusted-proxy-admin')
+    with override_settings(PUBLIC=True, ADMIN_TRUSTED_PROXY='192.0.2.10'):
+        for number in range(10):
+            post(web, '/login/', {'username': f'unknown-{number}', 'password': 'wrong'},
+                 REMOTE_ADDR='192.0.2.20', HTTP_X_FORWARDED_FOR=f'198.51.100.{number+1}')
+        response = post(web, '/login/', {'username': user.username, 'password': 'test-password'},
+                        REMOTE_ADDR='192.0.2.20', HTTP_X_FORWARDED_FOR='198.51.100.200')
+        assert response.status_code == 200
+        assert web.get('/').status_code == 302
+
+
+def test_account_limit_still_applies_across_proxy_clients(web):
+    user = account('proxy-account-limit-admin')
+    with override_settings(PUBLIC=True, ADMIN_TRUSTED_PROXY='192.0.2.10'):
+        for number in range(10):
+            post(web, '/login/', {'username': user.username, 'password': 'wrong'},
+                 REMOTE_ADDR='192.0.2.10', HTTP_X_FORWARDED_FOR=f'198.51.100.{number+1}')
+        response = post(web, '/login/', {'username': user.username, 'password': 'test-password'},
+                        REMOTE_ADDR='192.0.2.10', HTTP_X_FORWARDED_FOR='198.51.100.200')
+        assert response.status_code == 200
+        assert web.get('/').status_code == 302
+
+
+@pytest.mark.parametrize('public,peer,forwarded,expected', [
+    (True, '192.0.2.10', '198.51.100.2', '198.51.100.2'),
+    (True, '192.0.2.20', '198.51.100.2', '192.0.2.20'),
+    (True, '192.0.2.10', '198.51.100.2, 198.51.100.3', '192.0.2.10'),
+    (True, '192.0.2.10', 'invalid', '192.0.2.10'),
+    (True, '192.0.2.10', '2001:db8::1', '2001:db8::1'),
+    (False, '192.0.2.10', '198.51.100.2', '192.0.2.10'),
+])
+def test_proxy_hostname_and_untrusted_headers(web, monkeypatch, public, peer, forwarded, expected):
+    import socket
+    from django.test import RequestFactory
+    from waviot_telegram.web.views import client_address
+    def resolve(host, port, **kwargs):
+        assert host == 'proxy'
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('192.0.2.10', 0))]
+    monkeypatch.setattr('waviot_telegram.web.views.socket.getaddrinfo', resolve)
+    with override_settings(PUBLIC=public, ADMIN_TRUSTED_PROXY='proxy'):
+        request = RequestFactory().get('/login/', REMOTE_ADDR=peer, HTTP_X_FORWARDED_FOR=forwarded)
+        assert client_address(request) == expected
+
+
+def test_proxy_dns_failure_does_not_trust_forwarded_address(web, monkeypatch):
+    import socket
+    from django.test import RequestFactory
+    from waviot_telegram.web.views import client_address
+    def unresolved(*args, **kwargs):
+        raise socket.gaierror('synthetic DNS failure')
+    monkeypatch.setattr('waviot_telegram.web.views.socket.getaddrinfo', unresolved)
+    with override_settings(PUBLIC=True, ADMIN_TRUSTED_PROXY='proxy'):
+        request = RequestFactory().get('/login/', REMOTE_ADDR='192.0.2.10', HTTP_X_FORWARDED_FOR='198.51.100.2')
+        assert client_address(request) == '192.0.2.10'
