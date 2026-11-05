@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from waviot_telegram.access import Access
 from waviot_telegram.config import Settings
 from waviot_telegram.delivery import deliver, recover_delivery
 from waviot_telegram.flat_readings import fetch_flat_request, format_readings
@@ -127,3 +128,45 @@ def test_read_only_lookup_resumes_after_restart_without_becoming_a_send(tmp_path
         deliver(store, api, NOW)
         assert not api.sent and not store.uncertain_jobs()
         assert store.db.execute("SELECT state FROM outbox WHERE id=?", (job_id,)).fetchone()[0] == "pending"
+
+
+@pytest.mark.parametrize("change", ["disable", "rebind", "foreign_chat"])
+def test_queued_lookup_checks_access_before_contacting_waviot(tmp_path, monkeypatch, change):
+    database = tmp_path / "state.db"
+    with Store(database) as store:
+        employee(store)
+        store.enqueue("lookup", "flat_lookup", {**IDENTITY, "actor_id": 1, "chat_id": 2 if change == "foreign_chat" else 1})
+        job_id = store.db.execute("SELECT id FROM outbox WHERE key='lookup'").fetchone()[0]
+        if change == "disable":
+            Access(store).disable(1)
+        elif change == "rebind":
+            Access(store).invite(1, rebind=True, now=NOW)
+    def unexpected_client(*args, **kwargs):
+        pytest.fail("Запрос Waviot не должен начинаться без действующего доступа")
+    monkeypatch.setattr("waviot_telegram.flat_readings.WaviotClient", unexpected_client)
+    fetch_flat_request(database, job_id, now=NOW)
+    with Store(database) as store:
+        assert store.db.execute("SELECT state FROM outbox WHERE id=?", (job_id,)).fetchone()[0] == "skipped"
+        assert not store.db.execute("SELECT 1 FROM outbox WHERE kind='message'").fetchone()
+
+
+def test_access_revoked_during_lookup_discards_result(tmp_path, monkeypatch):
+    database = tmp_path / "state.db"
+    with Store(database) as store:
+        employee(store)
+        store.enqueue("lookup", "flat_lookup", {**IDENTITY, "actor_id": 1, "chat_id": 1})
+        job_id = store.db.execute("SELECT id FROM outbox WHERE key='lookup'").fetchone()[0]
+    class Client:
+        def __init__(self, *args, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def read(self, *args, **kwargs):
+            with Store(database) as store:
+                Access(store).disable(1)
+            return DATA
+    monkeypatch.setattr("waviot_telegram.flat_readings.WaviotClient", Client)
+    monkeypatch.setattr("waviot_telegram.flat_readings.load_settings", lambda: Settings(api_key="synthetic"))
+    fetch_flat_request(database, job_id, now=NOW)
+    with Store(database) as store:
+        assert store.db.execute("SELECT state FROM outbox WHERE id=?", (job_id,)).fetchone()[0] == "skipped"
+        assert not store.db.execute("SELECT 1 FROM outbox WHERE kind='message'").fetchone()

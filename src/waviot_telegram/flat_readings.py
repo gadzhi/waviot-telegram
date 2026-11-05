@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from html import escape
 
 from .config import load_settings
+from .access import Access
 from .messages import chunks
 from .storage import Store
 from .waviot_client import WaviotClient, WaviotError, counter_value
@@ -77,6 +78,10 @@ def fetch_flat_request(database, job_id, *, now=None):
         if not job:
             return
         identity = json.loads(job["payload"])
+        actor_id = identity.get("actor_id")
+        if type(actor_id) is not int or identity.get("chat_id") != actor_id or not Access(store).employee(actor_id):
+            store.job_state(job_id, "skipped", error="Доступ отозван или неверный адресат запроса")
+            return
         formatted = False
         try:
             settings = load_settings()
@@ -89,6 +94,9 @@ def fetch_flat_request(database, job_id, *, now=None):
         except (ValueError, TypeError, KeyError, AttributeError, OSError):
             text = f"Кв. {identity['apartment']}: Waviot не вернул пригодные данные показаний. Попробуйте позже."
         with store.atomic():
+            if not Access(store).employee(actor_id):
+                store.job_state(job_id, "skipped", error="Доступ отозван во время запроса")
+                return
             for index, part in enumerate(chunks(text)):
                 payload = {"text": part, **{key: identity[key] for key in ("chat_id", "actor_id") if key in identity}}
                 if formatted:
