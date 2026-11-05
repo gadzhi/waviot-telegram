@@ -1,5 +1,6 @@
 from access_helpers import employee
 from datetime import datetime, timezone
+import pytest
 
 from waviot_telegram.storage import Store
 from waviot_telegram.telegram_actions import BotActions
@@ -73,3 +74,39 @@ def test_reason_is_bound_to_prompt_actor_and_card_version(tmp_path):
         assert store.incident(item["id"])["diagnosis"] == "fault"
         assert store.incident(item["id"])["state"] == "open"
         assert any(m == "editMessageText" and "Проверена батарея" in p["text"] for m,p in api.calls)
+
+
+@pytest.mark.parametrize("number", ["9" * 20, "9" * 4301, str(2**63), "0"])
+@pytest.mark.parametrize("command", ["/history {}", "/resolve {} retry", "/resolve 1 sent {}"])
+def test_invalid_numeric_command_does_not_block_following_updates(tmp_path, number, command):
+    now = datetime(2026, 10, 31, 10, tzinfo=timezone.utc)
+    with Store(tmp_path / "state.db") as store:
+        employee(store, 100)
+        store.set("group_id", -100)
+        store.open_incident("first", "Тест", "no_data", "Тест", now=now)
+        store.job_state(1, "unknown")
+        store.ingest([update(1, command.format(number)), update(2, "/demo")])
+        BotActions(store, Telegram()).process(now)
+        assert not store.pending_updates()
+        assert len(store.incidents()) == 2
+        assert store.db.execute("SELECT state FROM outbox WHERE id=1").fetchone()[0] == "unknown"
+
+
+@pytest.mark.parametrize("data", [
+    "history:" + "9" * 20, "open:" + "9" * 20,
+    "case:" + "9" * 20 + ":1:claim", "case:1:" + "9" * 20 + ":claim",
+    "history:" + str(2**63), "open:" + str(2**63),
+    "cases:" + "9" * 4301,
+])
+def test_invalid_callback_number_does_not_block_following_updates(tmp_path, data):
+    now = datetime(2026, 10, 31, 10, tzinfo=timezone.utc)
+    with Store(tmp_path / "state.db") as store:
+        employee(store, 100)
+        store.set("group_id", -100)
+        store.ingest([{"update_id": 1, "callback_query": {
+            "id": "test-callback", "from": {"id": 100},
+            "message": {"message_id": 1, "chat": {"id": -100, "type": "supergroup"}}, "data": data,
+        }}, update(2, "/demo")])
+        BotActions(store, Telegram()).process(now)
+        assert not store.pending_updates()
+        assert len(store.incidents()) == 1

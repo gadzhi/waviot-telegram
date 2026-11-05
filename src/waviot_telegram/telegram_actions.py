@@ -9,6 +9,20 @@ from .config import load_settings
 from .telegram_client import TelegramError
 
 
+class InvalidNumber(ValueError):
+    pass
+
+
+def command_number(value, *, minimum=1):
+    # Check length before int(): Python also limits conversion of huge strings.
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9]{1,19}", value):
+        raise InvalidNumber
+    number = int(value)
+    if not minimum <= number <= 2**63 - 1:
+        raise InvalidNumber
+    return number
+
+
 class BotActions:
     def __init__(self, store, api, *, scan=None, timezone="Europe/Moscow"):
         self.store = store
@@ -72,13 +86,16 @@ class BotActions:
                             connected = group_admin and access.connect_group(chat_id, code, actor_id, now, hashed=bool(message.get("registration_code_hash")))
                             self.reply(update_id, "Рабочая группа подключена." if connected else "Не удалось подключить группу. Проверьте код, срок действия и права администратора.")
                         elif private or chat_id == self.store.get("group_id"):
-                            if callback:
-                                if private:
-                                    self.reply(update_id, "Работа со случаями доступна в рабочей группе.")
+                            try:
+                                if callback:
+                                    if private:
+                                        self.reply(update_id, "Работа со случаями доступна в рабочей группе.")
+                                    else:
+                                        self._callback(update_id, callback, now)
                                 else:
-                                    self._callback(update_id, callback, now)
-                            else:
-                                self._message(update_id, message, now)
+                                    self._message(update_id, message, now)
+                            except InvalidNumber:
+                                self.reply(update_id, "Некорректный номер. Используйте номер из актуальной карточки или списка.")
                     if private and not employee:
                         self.store.db.execute("UPDATE updates SET payload=? WHERE id=?", ('{"redacted":"registration"}', update_id))
                 self.store.db.execute("UPDATE updates SET done=1 WHERE id=?", (update_id,))
@@ -161,23 +178,24 @@ class BotActions:
             started = self.scan() if self.scan else False
             self.reply(update_id, "Обновление всего дома запущено. Прогресс: /status. Сбор займёт несколько минут." if started else "Сбор уже идёт или недоступен. Прогресс: /status.")
         elif command == "/history" and argument.isdecimal():
-            self._history(update_id, int(argument))
+            self._history(update_id, command_number(argument))
         elif command == "/delivery":
             jobs = self.store.uncertain_jobs()
             text = "Неопределённые отправки:\n" + "\n".join(f"#{j['id']} · {j['kind']} · {j['key']}" for j in jobs)
             self.reply(update_id, text if jobs else "Неопределённых отправок нет.")
         elif command == "/resolve" and re.fullmatch(r"\d+ (sent \d+|retry)", argument):
             job_id, operation, *rest = argument.split()
-            job = self.store.db.execute("SELECT * FROM outbox WHERE id=? AND state='unknown'", (int(job_id),)).fetchone()
+            job_id = command_number(job_id)
+            message_id = command_number(rest[0]) if operation == "sent" else None
+            job = self.store.db.execute("SELECT * FROM outbox WHERE id=? AND state='unknown'", (job_id,)).fetchone()
             if job and __import__("json").loads(job["payload"]).get("chat_id", self.store.get("group_id")) == self.chat_id and __import__("json").loads(job["payload"]).get("group_generation") == self.store.get("group_generation"):
                 if operation == "retry":
-                    self.store.job_state(int(job_id), "pending")
+                    self.store.job_state(job_id, "pending")
                     self.reply(update_id, "Повтор отправки запрошен после вашей сверки.")
                 else:
                     import json
                     payload = json.loads(job["payload"])
-                    message_id = int(rest[0])
-                    self.store.job_state(int(job_id), "sent", message_id=message_id)
+                    self.store.job_state(job_id, "sent", message_id=message_id)
                     if job["kind"] == "card":
                         self.store.set_incident_message_id(payload["incident_id"], message_id)
                     elif job["kind"] == "prompt":
@@ -195,7 +213,7 @@ class BotActions:
             return
         match = re.fullmatch(r"case:(\d+):(\d+):(claim|fault|unknown|normal|repaired)", data)
         if match:
-            incident_id, version = map(int, match.group(1, 2))
+            incident_id, version = map(command_number, match.group(1, 2))
             action = match.group(3)
             item = self.store.incident(incident_id)
             if not item or item["message_id"] != callback["message"].get("message_id") or item["version"] != version or item["state"] != "open":
@@ -208,15 +226,15 @@ class BotActions:
             return
         match = re.fullmatch(r"history:(\d+)", data)
         if match:
-            self._history(update_id, int(match[1]))
+            self._history(update_id, command_number(match[1]))
             return
         match = re.fullmatch(r"(cases|candidates):(\d+)", data)
         if match:
-            self._list(update_id, match[1] == "candidates", int(match[2]), now)
+            self._list(update_id, match[1] == "candidates", command_number(match[2], minimum=0), now)
             return
         match = re.fullmatch(r"open:(\d+)", data)
         if match:
-            item = self.store.incident(int(match[1]))
+            item = self.store.incident(command_number(match[1]))
             if item:
                 self.store.enqueue(f"card-refresh:{update_id}", "card", {"incident_id": item["id"], "version": item["version"]})
             return
